@@ -1,0 +1,218 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum ActivityType {
+  RUN
+  RIDE
+  SWIM
+  WALK
+}
+
+model User {
+  id             String     @id @default(uuid())
+  email          String     @unique
+  passwordHash   String
+  role           Role       @default(USER)
+  name           String
+  bio            String?
+  profilePicture String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  activities     Activity[]
+  kudos          Kudos[]
+  comments       Comment[]
+  badges         UserBadge[]
+
+  followers      Follows[]  @relation("following")
+  following      Follows[]  @relation("follower")
+
+  clubs          UserClub[]
+  gears          Gear[]
+  segmentEfforts SegmentEffort[]
+}
+
+model Activity {
+  id                String       @id @default(uuid())
+  userId            String
+  title             String
+  type              ActivityType
+  distanceInMeters  Float        @default(0)
+  durationInSeconds Int          @default(0)
+  averagePace       Float?       // Seconds per km/mile
+  startTime         DateTime
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  anomalyTag        String?      // Menandai jika ada kecurangan rute (misal: naik motor)
+  photos            String?      @db.Text // JSON string berisi array URL foto
+  gearId            String?
+
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gear              Gear?        @relation(fields: [gearId], references: [id], onDelete: SetNull)
+  routePoints       RoutePoint[]
+  kudos             Kudos[]
+  comments          Comment[]
+  segmentEfforts    SegmentEffort[]
+
+  @@index([userId, startTime(sort: Desc)]) // Index untuk feed user
+}
+
+// Menyimpan ribuan titik koordinat
+model RoutePoint {
+  activityId String
+  timestamp  DateTime
+  latitude   Float
+  longitude  Float
+  elevation  Float?
+
+  activity   Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  // Composite Primary Key untuk efisiensi penyimpanan & pencarian berurutan di InnoDB (Clustered Index)
+  @@id([activityId, timestamp])
+}
+
+model Kudos {
+  activityId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  activity   Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Composite Primary Key agar 1 user hanya bisa memberi 1 kudos per aktivitas
+  @@id([activityId, userId])
+  @@index([userId])
+}
+
+model Comment {
+  id         String   @id @default(uuid())
+  activityId String
+  userId     String
+  content    String   @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  activity   Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([activityId, createdAt])
+}
+
+model Badge {
+  id          String      @id @default(uuid())
+  name        String      @unique
+  description String
+  iconName    String?     // Nama class icon / url
+  createdAt   DateTime    @default(now())
+  
+  users       UserBadge[]
+}
+
+model UserBadge {
+  userId      String
+  badgeId     String
+  earnedAt    DateTime    @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge       Badge       @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, badgeId]) // Satu user cuma bisa dapet badge yang sama 1 kali
+}
+
+model Follows {
+  follower    User     @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followerId  String
+  following   User     @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
+  followingId String
+  createdAt   DateTime @default(now())
+
+  @@id([followerId, followingId])
+  @@index([followingId])
+}
+
+// ----------------------------------------
+// FITUR BARU: SEGMEN & KOM
+// ----------------------------------------
+model Segment {
+  id          String   @id @default(uuid())
+  name        String
+  startLat    Float
+  startLng    Float
+  endLat      Float
+  endLng      Float
+  distance    Float    // Jarak segmen dalam meter
+  createdAt   DateTime @default(now())
+  
+  efforts     SegmentEffort[]
+}
+
+model SegmentEffort {
+  id          String   @id @default(uuid())
+  segmentId   String
+  segment     Segment  @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activityId  String
+  activity    Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  duration    Int      // Waktu tempuh segmen dalam detik
+  createdAt   DateTime @default(now())
+
+  @@index([segmentId, duration(sort: Asc)]) // Untuk Papan Peringkat KOM/QOM cepat
+}
+
+// ----------------------------------------
+// FITUR BARU: KLUB & KOMUNITAS
+// ----------------------------------------
+model Club {
+  id          String   @id @default(uuid())
+  name        String
+  description String?  @db.Text
+  coverImage  String?
+  createdAt   DateTime @default(now())
+
+  members     UserClub[]
+}
+
+model UserClub {
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clubId      String
+  club        Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  role        String   @default("MEMBER") // ADMIN, MEMBER
+  joinedAt    DateTime @default(now())
+
+  @@id([userId, clubId])
+  @@index([clubId])
+}
+
+// ----------------------------------------
+// FITUR BARU: GEAR TRACKER (SEPATU/SEPEDA)
+// ----------------------------------------
+model Gear {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  type        String   // SHOES, BIKE
+  brand       String?
+  distance    Float    @default(0) // Total jarak dalam meter (akumulasi)
+  createdAt   DateTime @default(now())
+
+  activities  Activity[]
+
+  @@index([userId])
+}
