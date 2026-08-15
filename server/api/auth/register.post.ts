@@ -62,7 +62,7 @@ export default defineEventHandler(async (event) => {
     console.error('Register API Error:', error)
     throw createError({
       statusCode: 500,
-      statusMessage: 'Internal server error during registration'
+      statusMessage: `Internal server error: ${error.message || error}`
     })
   }
 })

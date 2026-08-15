@@ -53,7 +53,7 @@ export default defineEventHandler(async (event) => {
     console.error('Login API Error:', error)
     throw createError({
       statusCode: 500,
-      statusMessage: 'Internal server error during login'
+      statusMessage: `Internal server error: ${error.message || error}`
     })
   }
 })
